@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nudimu"
+version = "0.1.0"
+description = "Opposite-sign dimuon background from neutrino interactions in rock"
+requires-python = ">=3.9"
+dependencies = ["numpy", "pandas", "pyarrow"]
+
+[project.optional-dependencies]
+gst = ["uproot"]
+hepmc = ["pyhepmc"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["nudimu*"]
+
+[tool.pytest.ini_options]
+pythonpath = [".", "tests"]
+testpaths = ["tests"]
