@@ -19,6 +19,11 @@ from pathlib import Path
 
 import pandas as pd
 
+# run from anywhere without installing the package
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+
 from nudimu import dimuon as D
 from nudimu import events as E
 from nudimu import transport as T
@@ -43,15 +48,39 @@ def _meta_from_name(path: Path) -> dict:
 def cmd_convert(args) -> None:
     outdir = Path(args.out)
     outdir.mkdir(parents=True, exist_ok=True)
+    ok, failed, empty = 0, [], []
     for p in map(Path, args.inputs):
-        if p.suffix == ".root":
-            df = E.read_gst(p, max_events=args.max_events)
-        else:
-            df = E.read_nuhepmc(p, max_events=args.max_events)
+        size_mb = p.stat().st_size / 1e6 if p.exists() else 0.0
+        try:
+            if p.suffix == ".root":
+                df = E.read_gst(p, max_events=args.max_events)
+            else:
+                df = E.read_nuhepmc(p, max_events=args.max_events)
+        except Exception as exc:
+            # A file still being written by gntpc has no keys yet; a file
+            # built from a stub ghep has a tree with nothing in it.  Neither
+            # should stop the other 40 conversions.
+            print(f"  SKIP {p.name} ({size_mb:.1f} MB): "
+                  f"{type(exc).__name__}: {str(exc).splitlines()[0]}")
+            failed.append(p)
+            continue
+
+        if len(df) == 0:
+            print(f"  SKIP {p.name} ({size_mb:.1f} MB): no events")
+            empty.append(p)
+            continue
+
         meta = _meta_from_name(p)
+        meta["source_size_mb"] = round(size_mb, 3)
         dest = outdir / (p.name.split(".")[0] + ".parquet")
         E.write_events(df, dest, meta=meta)
-        print(f"{p.name}: {len(df)} events -> {dest}")
+        print(f"  {p.name}: {len(df)} events -> {dest.name}")
+        ok += 1
+
+    print(f"\nconverted {ok}, skipped {len(failed) + len(empty)}")
+    if failed or empty:
+        print("skipped files are usually still being written by make, or were")
+        print("built from an aborted gevgen run; re-run convert when make is done")
 
 
 def _load(paths) -> pd.DataFrame:

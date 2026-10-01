@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
 
 from .medium import CRUSTAL_ROCK_MASS_FRACTIONS
 
@@ -71,6 +71,15 @@ class GenieConfig:
     #: once.  Set False only if the tables are already in place.
     sf_warmup: bool = True
 
+    #: Hadronization algorithm for the HEDIS generator.  GENIE's stock
+    #: config/HEDISGenerator.xml hardcodes genie::LeptoHadPythia6/Default,
+    #: which returns false unconditionally in a PYTHIA8-only build: every
+    #: event is rejected and gevgen retries forever with no escape.  Set
+    #: this to the PYTHIA8 hadronizer and the Makefile writes a config
+    #: override into <root>/config and exports GXMLPATH so GENIE picks it
+    #: up ahead of the installed file.  None leaves the stock config alone.
+    hadronizer: Optional[str] = "genie::LeptoHadPythia8/Default"
+
     def flavour_name(self, pdg: int) -> str:
         return FLAVOURS[int(pdg)]
 
@@ -93,6 +102,26 @@ def _spline_path(cfg: GenieConfig, pdg: int, target: str) -> Path:
 
 def merged_spline_path(cfg: GenieConfig, pdg: int) -> Path:
     return cfg.root / "splines" / f"xsec_{cfg.flavour_name(pdg)}_{cfg.tune}_ROCK.xml"
+
+
+def config_override_command(cfg: GenieConfig) -> Optional[tuple]:
+    """Copy HEDISGenerator.xml out of the GENIE install and swap the
+    hadronizer, so GXMLPATH can shadow the stock one.
+
+    Derived from the installed file rather than written from scratch, so
+    everything else in it stays exactly as your GENIE version has it.
+    """
+    if not cfg.hadronizer:
+        return None
+    dest = cfg.root / "config" / "HEDISGenerator.xml"
+    cmd = " && ".join(
+        [
+            f"cp $(GENIE)/config/HEDISGenerator.xml {dest}",
+            f"sed -i 's|genie::LeptoHadPythia[68]/Default|{cfg.hadronizer}|' {dest}",
+            f"grep -q '{cfg.hadronizer}' {dest}",
+        ]
+    )
+    return (dest, [], cmd)
 
 
 def sf_warmup_command(cfg: GenieConfig) -> tuple:
@@ -183,6 +212,8 @@ def event_stem(cfg: GenieConfig, pdg: int, energy: float) -> str:
 def generation_commands(cfg: GenieConfig) -> List[tuple]:
     out: List[tuple] = []
     tgt = target_string(cfg.targets)
+    override = config_override_command(cfg)
+    extra_deps = [override[0]] if override else []
     for pdg in cfg.flavours:
         spline = merged_spline_path(cfg, pdg)
         for energy in cfg.energies_gev:
@@ -191,7 +222,7 @@ def generation_commands(cfg: GenieConfig) -> List[tuple]:
             out.append(
                 (
                     outfile,
-                    [spline],
+                    [spline] + extra_deps,
                     " ".join(
                         [
                             "gevgen",
@@ -249,8 +280,13 @@ def write_makefile(cfg: GenieConfig, path="Makefile") -> Path:
     splines = spline_commands(cfg)
     events = generation_commands(cfg)
     derived = conversion_commands(cfg)
+    override = config_override_command(cfg)
 
     lines = [_HEADER]
+    if override:
+        lines.append(f"# HEDIS hadronizer override -> {cfg.hadronizer}")
+        lines.append(f"export GXMLPATH := {cfg.root}/config\n")
+        events = [override] + events
     lines.append(".PHONY: all splines events derived sf-warmup clean-derived\n")
     lines.append("all: derived\n")
     if cfg.sf_warmup:
@@ -286,7 +322,22 @@ def _main(argv=None):  # pragma: no cover - thin CLI
     ap.add_argument("--root", default="genie")
     ap.add_argument("--no-sf-warmup", action="store_true",
                     help="skip the serial HEDIS SF cache build")
+    ap.add_argument("--energies", default=None,
+                    help="comma-separated neutrino energies in GeV; "
+                         "e.g. --energies 1000 for a smoke test")
+    ap.add_argument("--flavours", default=None,
+                    help="comma-separated neutrino PDG codes; "
+                         "e.g. --flavours 14 for a smoke test")
+    ap.add_argument("--hadronizer", default=GenieConfig.hadronizer,
+                    help="HEDIS hadronizer algorithm; pass an empty string "
+                         "to leave the stock GENIE config untouched")
     args = ap.parse_args(argv)
+
+    extra = {}
+    if args.energies:
+        extra["energies_gev"] = tuple(float(x) for x in args.energies.split(","))
+    if args.flavours:
+        extra["flavours"] = tuple(int(x) for x in args.flavours.split(","))
 
     cfg = GenieConfig(
         tune=args.tune,
@@ -294,8 +345,16 @@ def _main(argv=None):  # pragma: no cover - thin CLI
         n_events=args.n_events,
         root=Path(args.root),
         sf_warmup=not args.no_sf_warmup,
+        hadronizer=args.hadronizer or None,
+        **extra,
     )
-    print(f"wrote {write_makefile(cfg, args.out)}")
+    path = write_makefile(cfg, args.out)
+    n_jobs = len(cfg.flavours) * len(cfg.energies_gev)
+    print(f"wrote {path}: {n_jobs} generation jobs "
+          f"x {cfg.n_events} events, tune {cfg.tune}")
+    if cfg.hadronizer:
+        print(f"  hadronizer override -> {cfg.hadronizer} "
+              f"(via GXMLPATH={cfg.root}/config)")
 
 
 if __name__ == "__main__":  # pragma: no cover

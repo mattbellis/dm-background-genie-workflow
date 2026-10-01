@@ -24,7 +24,7 @@ from .species import SPECIES, Species, lookup  # noqa: F401
 # Submodules are imported lazily so that `python -m nudimu.workflow` does not
 # trip the "module found in sys.modules before execution" runpy warning, and
 # so that importing nudimu does not pull in uproot/pyhepmc.
-_SUBMODULES = ("transport", "events", "dimuon", "workflow")
+_SUBMODULES = ("transport", "events", "dimuon", "workflow", "splines")
 
 
 def __getattr__(name):
@@ -37,10 +37,9 @@ def __getattr__(name):
 def __dir__():
     return sorted(list(globals()) + list(_SUBMODULES))
 
-
 __version__ = "0.1.0"
 
 __all__ = [
     "STANDARD_ROCK", "Medium", "SPECIES", "Species", "lookup",
-    "transport", "events", "dimuon", "workflow", "__version__",
+    "transport", "events", "dimuon", "workflow", "splines", "__version__",
 ]

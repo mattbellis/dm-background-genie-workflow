@@ -10,6 +10,11 @@ from __future__ import annotations
 
 import numpy as np
 
+# run from anywhere without installing the package
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+
 from nudimu.medium import STANDARD_ROCK as ROCK
 from nudimu.species import lookup
 from nudimu import transport as T

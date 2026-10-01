@@ -161,3 +161,46 @@ def test_makefile_exposes_sf_warmup(tmp_path):
     text = W.write_makefile(cfg, tmp_path / "Makefile").read_text()
     assert "sf-warmup:" in text
     assert ".PHONY" in text and "sf-warmup" in text.split(".PHONY")[1].split("\n")[0]
+
+
+# ------------------------------------------------- hadronizer override
+
+def test_hadronizer_override_is_a_prerequisite_of_generation():
+    cfg = W.GenieConfig(flavours=(14,), energies_gev=(1000.0,))
+    override = W.config_override_command(cfg)
+    assert override is not None
+    dest, deps, cmd = override
+    assert str(dest).endswith("config/HEDISGenerator.xml")
+    assert cfg.hadronizer in cmd
+    assert "LeptoHadPythia[68]" in cmd      # matches either stock value
+    for _, gdeps, _ in W.generation_commands(cfg):
+        assert dest in gdeps
+
+
+def test_override_derives_from_the_installed_file():
+    """Never write the XML from scratch; sed the user's own copy."""
+    _, _, cmd = W.config_override_command(W.GenieConfig())
+    assert "cp $(GENIE)/config/HEDISGenerator.xml" in cmd
+    assert "grep -q" in cmd                 # fail loudly if sed missed
+
+
+def test_override_can_be_disabled():
+    cfg = W.GenieConfig(flavours=(14,), energies_gev=(1000.0,), hadronizer=None)
+    assert W.config_override_command(cfg) is None
+    for _, deps, _ in W.generation_commands(cfg):
+        assert all("HEDISGenerator" not in str(d) for d in deps)
+
+
+def test_makefile_exports_gxmlpath(tmp_path):
+    cfg = W.GenieConfig(flavours=(14,), energies_gev=(1000.0,),
+                        root=tmp_path / "genie")
+    text = W.write_makefile(cfg, tmp_path / "Makefile").read_text()
+    assert f"export GXMLPATH := {cfg.root}/config" in text
+    assert "HEDISGenerator.xml" in text
+
+
+def test_makefile_omits_gxmlpath_when_disabled(tmp_path):
+    cfg = W.GenieConfig(flavours=(14,), energies_gev=(1000.0,),
+                        hadronizer=None, root=tmp_path / "genie")
+    text = W.write_makefile(cfg, tmp_path / "Makefile").read_text()
+    assert "GXMLPATH" not in text
